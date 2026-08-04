@@ -23,9 +23,14 @@ jobs:
         shell: bash
         run: ./build_macos_linux.sh
 
+      - name: Package macOS app zip
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent "dist/db_data_validator.app" "db-data-validator-macos.zip"
+
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: db-data-validator-macos
-          path: dist/db_data_validator.app
+          path: db-data-validator-macos.zip
           if-no-files-found: error

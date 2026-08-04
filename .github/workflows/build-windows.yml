@@ -23,9 +23,14 @@ jobs:
         shell: cmd
         run: build_windows.bat
 
+      - name: Package Windows app zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/db_data_validator/*" -DestinationPath "db-data-validator-windows.zip"
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: db-data-validator-windows
-          path: dist/db_data_validator/**
+          path: db-data-validator-windows.zip
           if-no-files-found: error
