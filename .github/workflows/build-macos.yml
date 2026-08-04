@@ -1,0 +1,31 @@
+name: Build macOS Distribution
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build macOS app
+        shell: bash
+        run: ./build_macos_linux.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-data-validator-macos
+          path: dist/db_data_validator.app
+          if-no-files-found: error

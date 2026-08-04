@@ -1,0 +1,31 @@
+name: Build Windows Distribution
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Windows app
+        shell: cmd
+        run: build_windows.bat
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-data-validator-windows
+          path: dist/db_data_validator/**
+          if-no-files-found: error
