@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: db-data-validator
+Version: 1.0.0
+Summary: Desktop app for reviewing duplicate primary keys in Excel or CSV data files.
+Requires-Python: >=3.10
+Requires-Dist: PySide6<7,>=6.7
+Requires-Dist: openpyxl<4,>=3.1

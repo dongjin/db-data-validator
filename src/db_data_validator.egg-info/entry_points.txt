@@ -1,0 +1,2 @@
+[console_scripts]
+db-data-validator = db_data_validator.main_window:run
