@@ -34,7 +34,7 @@ class LoadedSheet:
 
 
 class ExcelService:
-    """Loads a workbook and reviews duplicate primary-key values on sheet 1."""
+    """Loads a workbook and runs data-quality checks on sheet 1."""
 
     def __init__(self) -> None:
         self.input_path: Path | None = None
@@ -44,6 +44,7 @@ class ExcelService:
         self.loaded_sheets: list[LoadedSheet] = []
         self.primary_key_columns: list[str] = []
         self.reviewed = False
+        self.last_check_type: str | None = None
 
     def load(self, file_path: str | Path) -> list[LoadedSheet]:
         path = Path(file_path).expanduser().resolve()
@@ -91,6 +92,7 @@ class ExcelService:
         self.loaded_sheets = loaded
         self.primary_key_columns = primary_key_columns
         self.reviewed = False
+        self.last_check_type = None
         return loaded
 
     def review(
@@ -100,15 +102,7 @@ class ExcelService:
     ) -> tuple[int, int]:
         workbook = self._require_workbook()
         first_sheet = workbook.worksheets[0]
-        header_map = self._header_index_map(first_sheet)
-        header_key = primary_key_column.strip().casefold()
-        primary_key_col = header_map.get(header_key)
-        if primary_key_col is None:
-            raise ExcelProcessingError(
-                f"Primary key column '{primary_key_column}' was not found in sheet '{first_sheet.title}'."
-            )
-
-        headers = self._display_headers(first_sheet)
+        primary_key_col, headers = self._resolve_selected_column(first_sheet, primary_key_column)
         key_col_index = primary_key_col - 1
         key_counts: dict[str, int] = defaultdict(int)
         key_row_numbers: dict[str, list[int]] = defaultdict(list)
@@ -235,12 +229,113 @@ class ExcelService:
         self.loaded_sheets = [first_loaded_sheet, summary_sheet, issues_sheet]
         if progress_callback is not None:
             progress_callback(98)
-        self.issues_workbook = self._build_issues_workbook(summary_rows, issue_rows)
+        self.issues_workbook = self._build_issues_workbook(
+            summary_title="Duplicate Summary",
+            summary_rows=summary_rows,
+            issue_rows=issue_rows,
+        )
         self.issue_records_rows = issue_rows
         self.reviewed = True
+        self.last_check_type = "duplicate"
         if progress_callback is not None:
             progress_callback(100)
         return len(duplicate_keys), duplicate_records_count
+
+    def null_check(
+        self,
+        primary_key_column: str,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> tuple[int, int]:
+        workbook = self._require_workbook()
+        first_sheet = workbook.worksheets[0]
+        primary_key_col, headers = self._resolve_selected_column(first_sheet, primary_key_column)
+        key_col_index = primary_key_col - 1
+        total_rows = max(first_sheet.max_row - 1, 0)
+        progress_interval = 2000
+
+        issue_rows: list[tuple[Any, ...]] = [
+            ("Source Row", primary_key_column, "Issue Type", *headers)
+        ]
+        null_row_numbers: list[int] = []
+
+        for row_number, row_values in enumerate(
+            first_sheet.iter_rows(
+                min_row=2,
+                max_row=first_sheet.max_row,
+                max_col=first_sheet.max_column,
+                values_only=True,
+            ),
+            start=2,
+        ):
+            selected_value = row_values[key_col_index] if key_col_index < len(row_values) else None
+            if self._is_null_or_empty(selected_value):
+                null_row_numbers.append(row_number)
+                issue_rows.append(
+                    (
+                        row_number,
+                        self._display_key_value(selected_value),
+                        "Null/Empty value",
+                        *row_values,
+                    )
+                )
+
+            if (
+                progress_callback is not None
+                and total_rows > 0
+                and (row_number - 1) % progress_interval == 0
+            ):
+                progress_callback(min(95, int(((row_number - 1) * 95) / total_rows)))
+
+        summary_rows: list[tuple[Any, ...]] = [
+            (
+                primary_key_column,
+                "Null/Empty Count",
+                "Row Numbers",
+                "Details",
+            ),
+            (
+                "(null or empty)",
+                len(null_row_numbers),
+                ", ".join(str(number) for number in null_row_numbers),
+                f"{len(null_row_numbers)} rows have null or empty values in selected column",
+            ),
+        ]
+
+        summary_sheet = LoadedSheet(
+            name="Null Check Summary",
+            rows=summary_rows,
+            max_columns=max(len(row) for row in summary_rows),
+        )
+        issues_sheet = LoadedSheet(
+            name="Issue Records",
+            rows=issue_rows,
+            max_columns=max(len(row) for row in issue_rows),
+        )
+        first_loaded_sheet = self.loaded_sheets[0] if self.loaded_sheets else self._build_loaded_sheets([first_sheet])[0]
+        self.loaded_sheets = [first_loaded_sheet, summary_sheet, issues_sheet]
+        self.issues_workbook = self._build_issues_workbook(
+            summary_title="Null Check Summary",
+            summary_rows=summary_rows,
+            issue_rows=issue_rows,
+        )
+        self.issue_records_rows = issue_rows
+        self.reviewed = True
+        self.last_check_type = "null"
+        if progress_callback is not None:
+            progress_callback(100)
+        return len(null_row_numbers), len(null_row_numbers)
+
+    def _resolve_selected_column(
+        self, sheet: Worksheet, selected_column_name: str
+    ) -> tuple[int, list[str]]:
+        header_map = self._header_index_map(sheet)
+        header_key = selected_column_name.strip().casefold()
+        selected_column_idx = header_map.get(header_key)
+        if selected_column_idx is None:
+            raise ExcelProcessingError(
+                f"Selected column '{selected_column_name}' was not found in sheet '{sheet.title}'."
+            )
+        return selected_column_idx, self._display_headers(sheet)
 
     @staticmethod
     def _header_index_map(sheet: Worksheet) -> dict[str, int]:
@@ -259,6 +354,12 @@ class ExcelService:
         if value is None:
             return ""
         return str(value).strip().casefold()
+
+    @staticmethod
+    def _is_null_or_empty(value: Any) -> bool:
+        if value is None:
+            return True
+        return str(value).strip() == ""
 
     @staticmethod
     def _display_key_value(value: Any) -> str:
@@ -321,8 +422,13 @@ class ExcelService:
     def default_output_path(self) -> Path:
         if self.input_path is None:
             raise ExcelProcessingError("Load a workbook first.")
+        suffix = "issues"
+        if self.last_check_type == "duplicate":
+            suffix = "duplicate_issues"
+        elif self.last_check_type == "null":
+            suffix = "null_issues"
         return self.input_path.with_name(
-            f"{self.input_path.stem}_duplicate_issues{self.input_path.suffix}"
+            f"{self.input_path.stem}_{suffix}{self.input_path.suffix}"
         )
 
     def close(self) -> None:
@@ -343,6 +449,7 @@ class ExcelService:
         self.primary_key_columns = []
         self.input_path = None
         self.reviewed = False
+        self.last_check_type = None
 
     def _require_workbook(self) -> OpenPyxlWorkbook:
         if self.workbook is None:
@@ -376,11 +483,13 @@ class ExcelService:
 
     @staticmethod
     def _build_issues_workbook(
-        summary_rows: list[tuple[Any, ...]], issue_rows: list[tuple[Any, ...]]
+        summary_title: str,
+        summary_rows: list[tuple[Any, ...]],
+        issue_rows: list[tuple[Any, ...]],
     ) -> OpenPyxlWorkbook:
         workbook = Workbook()
         summary_sheet = workbook.active
-        summary_sheet.title = "Duplicate Summary"
+        summary_sheet.title = summary_title
         for row in summary_rows:
             summary_sheet.append(list(row))
 

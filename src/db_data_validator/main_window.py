@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         title = QLabel("DB Data Validator")
         title.setObjectName("titleLabel")
         subtitle = QLabel(
-            "Load an Excel or CSV file, choose a primary-key column from sheet 1, review duplicate rows, and save only issue records."
+            "Load an Excel or CSV file, choose a column from sheet 1, then run either Duplicate Check or Null/Empty Check and save issue records."
         )
         subtitle.setWordWrap(True)
         subtitle.setObjectName("subtitleLabel")
@@ -81,18 +81,21 @@ class MainWindow(QMainWindow):
 
         self.load_button = QPushButton("1. Load Data File")
         self.load_button.clicked.connect(self.load_excel)
-        self.process_button = QPushButton("2. Review")
-        self.process_button.clicked.connect(self.review_excel)
+        self.duplicate_check_button = QPushButton("2 (a) Duplicate Check")
+        self.duplicate_check_button.clicked.connect(self.run_duplicate_check)
+        self.null_check_button = QPushButton("2 (b) Null/Empty Check")
+        self.null_check_button.clicked.connect(self.run_null_check)
         self.save_button = QPushButton("3. Save Issue Records")
         self.save_button.clicked.connect(self.save_excel)
         self.primary_key_combo = QComboBox()
         self.primary_key_combo.setMinimumWidth(220)
-        self.primary_key_combo.setToolTip("Select the primary-key column from sheet 1")
+        self.primary_key_combo.setToolTip("Select the column from sheet 1")
 
         controls_layout.addWidget(self.load_button)
-        controls_layout.addWidget(QLabel("Primary key column:"))
+        controls_layout.addWidget(QLabel("Column Selection:"))
         controls_layout.addWidget(self.primary_key_combo)
-        controls_layout.addWidget(self.process_button)
+        controls_layout.addWidget(self.duplicate_check_button)
+        controls_layout.addWidget(self.null_check_button)
         controls_layout.addWidget(self.save_button)
         controls_layout.addStretch(1)
         root.addWidget(controls)
@@ -139,7 +142,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.tabs, 1)
 
         note = QLabel(
-            f"The full first-sheet data is loaded for review. "
+            f"The full first-sheet data is loaded for checks. "
             f"For responsiveness, each preview tab displays at most {PREVIEW_ROW_LIMIT:,} rows."
         )
         note.setObjectName("noteLabel")
@@ -152,7 +155,8 @@ class MainWindow(QMainWindow):
         self._apply_styles()
 
     def _set_initial_state(self) -> None:
-        self.process_button.setEnabled(False)
+        self.duplicate_check_button.setEnabled(False)
+        self.null_check_button.setEnabled(False)
         self.save_button.setEnabled(False)
         self.primary_key_combo.setEnabled(False)
         self.previous_button.setEnabled(False)
@@ -176,7 +180,8 @@ class MainWindow(QMainWindow):
             self.file_label.setText(str(self.service.input_path))
             self._update_summary(loaded_sheets)
             self._populate_primary_key_columns()
-            self.process_button.setEnabled(True)
+            self.duplicate_check_button.setEnabled(True)
+            self.null_check_button.setEnabled(True)
             self.save_button.setEnabled(False)
             self.statusBar().showMessage(
                 f"Loaded {Path(file_path).name}", 5000
@@ -186,37 +191,58 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def review_excel(self) -> None:
+    def run_duplicate_check(self) -> None:
+        self._run_selected_check("duplicate")
+
+    def run_null_check(self) -> None:
+        self._run_selected_check("null")
+
+    def _run_selected_check(self, check_type: str) -> None:
         selected_column = self.primary_key_combo.currentText().strip()
         if not selected_column:
             self._show_error(
-                "Missing primary key column",
-                "Choose a primary key column before running review.",
+                "Missing column selection",
+                "Choose a column before running a check.",
             )
             return
 
         self._set_review_running_state(True)
         self._start_review_progress_dialog()
         try:
-            duplicate_key_count, duplicate_row_count = self.service.review(
-                selected_column,
-                progress_callback=self._on_review_progress,
-            )
+            if check_type == "duplicate":
+                summary_count, issue_count = self.service.review(
+                    selected_column,
+                    progress_callback=self._on_review_progress,
+                )
+                complete_title = "Duplicate check complete"
+                complete_message = (
+                    f"Duplicate values found: {summary_count}\n"
+                    f"Rows with issues: {issue_count}\n\n"
+                    "See the 'Duplicate Summary' and 'Issue Records' tabs for details."
+                )
+            else:
+                summary_count, issue_count = self.service.null_check(
+                    selected_column,
+                    progress_callback=self._on_review_progress,
+                )
+                complete_title = "Null check complete"
+                complete_message = (
+                    f"Rows with null/empty values: {summary_count}\n"
+                    f"Rows with issues: {issue_count}\n\n"
+                    "See the 'Null Check Summary' and 'Issue Records' tabs for details."
+                )
+
             self._display_sheets(self.service.loaded_sheets)
             self._update_summary(self.service.loaded_sheets)
             self.save_button.setEnabled(True)
             QMessageBox.information(
                 self,
-                "Review complete",
-                (
-                    f"Duplicate primary-key values found: {duplicate_key_count}\n"
-                    f"Rows with issues: {duplicate_row_count}\n\n"
-                    "See the 'Duplicate Summary' and 'Issue Records' tabs for details."
-                ),
+                complete_title,
+                complete_message,
             )
-            self.statusBar().showMessage("Review complete", 5000)
+            self.statusBar().showMessage(complete_title, 5000)
         except ExcelProcessingError as exc:
-            self._show_error("Review failed", str(exc))
+            self._show_error("Check failed", str(exc))
         finally:
             self._finish_review_progress_dialog()
             self._set_review_running_state(False)
@@ -239,7 +265,7 @@ class MainWindow(QMainWindow):
         )
         output_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Save Duplicate Issue Workbook",
+            "Save Issue Records",
             str(default_path),
             file_filter,
         )
@@ -252,7 +278,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "File saved",
-                f"The duplicate issue workbook was saved to:\n\n{saved_path}",
+                f"The issue workbook was saved to:\n\n{saved_path}",
             )
             self.statusBar().showMessage(f"Saved {saved_path.name}", 6000)
         except ExcelProcessingError as exc:
@@ -350,7 +376,8 @@ class MainWindow(QMainWindow):
 
     def _set_review_running_state(self, is_running: bool) -> None:
         self.load_button.setEnabled(not is_running)
-        self.process_button.setEnabled(not is_running and bool(self.service.primary_key_columns))
+        self.duplicate_check_button.setEnabled(not is_running and bool(self.service.primary_key_columns))
+        self.null_check_button.setEnabled(not is_running and bool(self.service.primary_key_columns))
         self.primary_key_combo.setEnabled(not is_running and bool(self.service.primary_key_columns))
         self.save_button.setEnabled(not is_running and self.service.reviewed)
         self.find_button.setEnabled(not is_running)
@@ -359,8 +386,8 @@ class MainWindow(QMainWindow):
         self.next_button.setEnabled(not is_running and len(self.search_match_locations) > 0)
 
     def _start_review_progress_dialog(self) -> None:
-        dialog = QProgressDialog("Reviewing records...", "", 0, 100, self)
-        dialog.setWindowTitle("Review in progress")
+        dialog = QProgressDialog("Running check...", "", 0, 100, self)
+        dialog.setWindowTitle("Check in progress")
         dialog.setWindowModality(Qt.WindowModal)
         dialog.setMinimumDuration(0)
         dialog.setCancelButton(None)
@@ -369,7 +396,7 @@ class MainWindow(QMainWindow):
         dialog.setValue(0)
         dialog.show()
         self.review_progress_dialog = dialog
-        self.statusBar().showMessage("Review started...", 2000)
+        self.statusBar().showMessage("Check started...", 2000)
 
     def _on_review_progress(self, value: int) -> None:
         if self.review_progress_dialog is None:
