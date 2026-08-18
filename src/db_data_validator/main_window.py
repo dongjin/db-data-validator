@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
 
-        title = QLabel("DB Data Validator")
+        title = QLabel("DB Data Validator v1.1")
         title.setObjectName("titleLabel")
         subtitle = QLabel(
             "Load an Excel or CSV file, choose a column from sheet 1, then run either Duplicate Check or Null/Empty Check and save issue records."
